@@ -11,7 +11,7 @@ setwd(workdir_path)
 casen_mod <- read.csv(file = "data/casen_mod.csv")
 
 
-#trabsformar a factor
+#transformar a factor
 casen_mod$nac = as.factor(casen_mod$nac)
 casen_mod$ing_nivel = as.factor(casen_mod$ing_nivel)
 casen_mod$sexo = as.factor(casen_mod$sexo)
@@ -21,28 +21,53 @@ casen_reg11 = casen_mod[(casen_mod$region == 11),]
 
 casen_rm = casen_mod[(casen_mod$region == 13),]
 
+#Generación Variables
+
+#0 si el ingreso per cápita es bajo el promedio, 1 en caso contrario
+casen_reg11$nivel_ing = ifelse(casen_reg11$ingreso <= mean(casen_reg11$ingreso),0,1)
+casen_rm$nivel_ing = ifelse(casen_rm$ingreso <= mean(casen_rm$ingreso),0,1)
+
+
+#0 si el ingreso per cápita es bajo la mediana, 1 en caso contrario
+casen_reg11$ing_med = ifelse(casen_reg11$ingreso <= median(casen_reg11$ingreso),0,1)
+casen_rm$ing_med = ifelse(casen_rm$ingreso <= median(casen_rm$ingreso),0,1)
+
+
+#0 si el ingreso per cápita es bajo al tercer cuartil, 1 en caso contrario
+casen_reg11$ing_3q = ifelse(casen_reg11$ingreso <= 720000,0,1)
+casen_rm$ing_3q = ifelse(casen_rm$ingreso <= 739083,0,1)
+
 ##---------------- Decision trees  ----------------##
 
 ## Reg 11
 
-### Sin nac
-arbol_11=rpart(ing_nivel~edad+esc+sexo,casen_reg11,model=T,method = "class")
-rpart.plot(arbol_11,type=5,extra=104)
+### Modelos
+arbol_11=rpart(nivel_ing~edad+esc+sexo+nac,casen_reg11,model=T,method = "class")
 
-### Con nac
-arbol_11_nac=rpart(ing_nivel~edad+esc+sexo+nac,casen_reg11,model=T,method = "class")
-rpart.plot(arbol_11_nac,type=5,extra=104)
+arbol_11_med=rpart(ing_med~edad+esc+sexo+nac,casen_reg11,model=T,method = "class")
+
+arbol_11_3q=rpart(ing_3q~edad+esc+sexo+nac,casen_reg11,model=T,method = "class")
+
+
+### Gráficos
+rpart.plot(arbol_11,type=5,extra=104)
+rpart.plot(arbol_11_med,type=5,extra=104)
+rpart.plot(arbol_11_3q,type=5,extra=104)
 
 ## RM
-### Sin nac
-arbol_rm=rpart(ing_nivel~edad+esc+sexo,casen_rm,model=T, method = "class")
+
+### Modelos
+arbol_rm=rpart(nivel_ing~edad+esc+sexo+nac,casen_rm,model=T,method = "class")
+
+arbol_rm_med=rpart(ing_med~edad+esc+sexo+nac,casen_rm,model=T,method = "class")
+
+arbol_rm_3q=rpart(ing_3q~edad+esc+sexo+nac,casen_rm,model=T,method = "class")
+
+
+### Gráficos
 rpart.plot(arbol_rm,type=5,extra=104)
-
-### Con nac
-arbol_rm_nac=rpart(ing_nivel~edad+esc+sexo+nac,casen_rm,model=T, method = "class")
-rpart.plot(arbol_rm_nac,type=5,extra=104)
-
-
+rpart.plot(arbol_rm_med,type=5,extra=104)
+rpart.plot(arbol_rm_3q,type=5,extra=104)
 
 ##----------------- Random Forest ----------------##
 
@@ -52,8 +77,12 @@ casen_train<-casen_mod[dt,]
 casen_test<-casen_mod[-dt,]
 
 
+#Predicción Random Forest
 ingresos_rf = randomForest(ing_nivel~edad+esc+sexo+nac, data = casen_train, ntree = 500)
-
 pred_rf  = predict(ingresos_rf, casen_test)
-
 aciertos_rf = which(casen_test$ing_nivel==pred_rf)
+
+#Predicción Árboles de Decisión
+arbol_casen = rpart(ing_nivel~edad+esc+sexo+nac,casen_train,model=T, method = "class")
+pred_ad = predict(arbol_casen,casen_test,type = "class")
+aciertos_ad = which(casen_test$ing_nivel==pred_ad)
