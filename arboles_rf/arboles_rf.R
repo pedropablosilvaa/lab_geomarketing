@@ -260,3 +260,12 @@ hist_aciertos_rf = ggplot(pruebas_rf,aes(aciertos)) +
 
 hist_aciertos_rf
 
+
+#tabla de resultados final
+resultados_f = data.frame(stringsAsFactors=FALSE )
+test_ad = c(as.character("arbolesDecision"),mean(pruebas_ad$tiempos), mean(pruebas_ad$aciertos), (mean(pruebas_ad$aciertos)/nrow(casen_test))*100)
+test_rf = c(as.character("randomForest"), mean(pruebas_rf$tiempos), mean(pruebas_rf$aciertos), (mean(pruebas_rf$aciertos)/nrow(casen_test))*100)
+resultados_f = rbind(resultados_f, test_ad, stringsAsFactors=FALSE )
+resultados_f = rbind(resultados_f, test_rf)
+colnames(resultados_f) <- c("metodo","tiempos","aciertos","porc promedio")
+resultados_f
