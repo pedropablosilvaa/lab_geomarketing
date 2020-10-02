@@ -1,0 +1,410 @@
+---
+title: 'Trabajo 3 Geomarketing: Árboles de Decisión y Random Forest'
+author: "Matías Escudero, Pedro Silva"
+date: "23-08-2020"
+output: html_document
+---
+
+
+# I - Análisis comparativo entre la región de Aysén y Metropolitana.
+## Espacio de Trabajo
+
+En primer lugar, se cargan las librerías a utilizar y se importa el archivo .csv de la encuesta CASEN, que contiene información con la cual se realizarán las distintas clasificaciones.
+
+```{r warning=FALSE, message=FALSE}
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(readr)
+library(ggplot2)
+
+workdir_path <- "C:/Users/ppsa_/Documents/Drope/u/Nivel 10/Geomarketing/lab_geomarketing/arboles_rf"
+setwd(workdir_path)
+
+casen_mod <- read_csv(
+  "../data/casen_mod.csv", 
+  col_types = cols(nac = col_integer()))
+
+```
+
+## Creación y Modificación de Variables
+
+A continuación, se transforman a factor las variables de interés:
+```{r}
+casen_mod$nac = as.factor(casen_mod$nac)
+casen_mod$ing_nivel = as.factor(casen_mod$ing_nivel)
+casen_mod$sexo = as.factor(casen_mod$sexo)
+```
+
+Para el caso de estudio desea comparar clasificaciones de la región Metropolitana con la región de Aysén, por lo cual se generar dos Data Frames que contenga únicamente los registros de estas regiones:
+
+```{r}
+#Tablas para la rm y la región de Aysén
+casen_reg11 = casen_mod[(casen_mod$region == 11),]
+casen_rm = casen_mod[(casen_mod$region == 13),]
+```
+
+Ya con los Data Frames generados para cada región, se estudia cómo se distribuye el nivel de ingreso dentro de cada una: 
+
+### Región de Aysén
+
+```{r echo=FALSE}
+summary(casen_reg11$ingreso)
+```
+
+```{r echo=FALSE, warning=FALSE}
+hist_ing_reg11 = ggplot(casen_reg11,aes(ingreso)) + 
+  geom_histogram(fill="#005A32", color= "#D9F0A3",bins = 50)+
+  ggtitle("Histograma Nivel de Ingresos Región de Aysén")+
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(x= "Ingreso", y= "Frecuencia") +
+  xlim(c(0, 1500000))+
+  geom_vline(data=casen_reg11, aes(xintercept=mean(ingreso), color="promedio"),
+             linetype="dashed")+
+  geom_vline(data=casen_reg11, aes(xintercept=median(ingreso), color="mediana"),
+             linetype="dashed")+
+  scale_color_manual(name = "Indicador", values = c(mediana="blue",promedio="red"))
+
+hist_ing_reg11
+```
+
+### Región Metropolitana
+
+```{r echo=FALSE}
+summary(casen_rm$ingreso)
+```
+
+```{r echo=FALSE, warning=FALSE}
+hist_ing_rm = ggplot(casen_rm,aes(ingreso)) + 
+  geom_histogram(fill="#005A32", color= "#D9F0A3",bins = 50)+
+  ggtitle("Histograma Nivel de Ingresos Región Metropolitana")+
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(x= "Ingreso", y= "Frecuencia") +
+  xlim(c(0, 1500000))+
+  geom_vline(data=casen_rm, aes(xintercept=mean(ingreso), color="promedio"),
+             linetype="dashed")+
+  geom_vline(data=casen_rm, aes(xintercept=median(ingreso), color="mediana"),
+             linetype="dashed")+
+  scale_color_manual(name = "Indicador", values = c(mediana="blue",promedio="red"))
+
+hist_ing_rm
+```
+
+Para la posterior aplicación de los algoritmos de árboles de decisión, es necesario reclasificar la variable de nivel de ingreso como variable binaria. Al estudiar el comportamiento del nivel de ingresos para ambas regiones, se logra apreciar que existe una amplia diferencia entre los valores de la media aritmética y la mediana. Esto se le puede atribuir a los elevados ingresos que recibe un porcentaje de la población, lo cual genera que el valor de la media aritmética aumente y no sea realmente representativo como el nivel de ingreso promedio que presenta cada región. 
+
+Es por esto que se generan dos nuevas variables binarias: nivel de ingreso en base al promedio y en base a la mediana. 
+
+```{r}
+casen_reg11$nivel_ing = ifelse(casen_reg11$ingreso <= mean(casen_reg11$ingreso),0,1)
+casen_rm$nivel_ing = ifelse(casen_rm$ingreso <= mean(casen_rm$ingreso),0,1)
+
+```
+
+La variable nivel_ing toma el valor 0 para aquellos registros en donde el nivel de ingreso sea menor al valor de la media aritmética, y 1 si está sobre. Al ser la media aritmética un valor tan elevado, se considera una clasificación que diferencia entre ingresos altos y no-altos.
+
+```{r}
+casen_reg11$ing_med = ifelse(casen_reg11$ingreso <= median(casen_reg11$ingreso),0,1)
+casen_rm$ing_med = ifelse(casen_rm$ingreso <= median(casen_rm$ingreso),0,1)
+
+```
+
+Por otra parte, la variable nivel_ing_med  toma el valor 0 para aquellos registros en donde el nivel de ingreso sea menor al valor de la mediana, y 1 si está sobre. Para este caso, la mediana se considera más representativa como medida de tendencia central, por lo cual genera una clasificación más equitativa. 
+
+## Árboles de Decisión
+
+Ya con las nuevas variables creadas, se generan los modelos de clasificación para ambas regiones, en donde se utilizan la variables binarias de nivel de ingreso como variable dependiente y las variables de edad, nacionalidad, sexo y escolaridad como explicativas. Se generan dos modelos para cada región:
+
+```{r}
+#Modelos Región de Aysén
+arbol_11=rpart(nivel_ing~edad+esc+sexo+nac,casen_reg11,model=T,method = "class")
+arbol_11_med=rpart(ing_med~edad+esc+sexo+nac,casen_reg11,model=T,method = "class")
+
+#Modelos Región Metropolitana
+arbol_rm=rpart(nivel_ing~edad+esc+sexo+nac,casen_rm,model=T,method = "class")
+arbol_rm_med=rpart(ing_med~edad+esc+sexo+nac,casen_rm,model=T,method = "class")
+
+```
+
+A continuación, se grafican los árboles de ambos modelos:
+
+### Árbol de Decisión Región de Aysén
+
+#### Mediana
+
+```{r echo=FALSE}
+rpart.plot(arbol_11_med,type=5,extra=104)
+```
+
+En primer lugar, se logra apreciar que el modelo no distingue a la variable de nacionalidad como significativa.
+
+La primera “ramificación” del árbol se genera en base a los años de escolaridad, para el cual el algoritmo identifica como primer filtro si la persona tiene 14 años de escolaridad o más. 
+
+Si una persona tiene _14 o más años de escolaridad_, el algoritmo indica que las demás variables explicativas del modelo no son significativas y los años de educación que tenga la persona es el factor más relevante al momento de distinguir el nivel de ingreso que recibe. Se podría inferir que para la región de Aysén con obtener un título técnico profesional la probabilidad de recibir un ingreso “alto” es mayor, independiente de la edad, sexo o nacionalidad.
+Un 31% de la población de Aysén entraría a esta categoría, en donde un 79% de esta pertenece a población con ingresos “altos”. 
+
+En el otro extremo se encuentran aquellas _personas que tienen menos de 11 años de escolaridad_, en donde tampoco son significativas las variables de edad, sexo o nacionalidad. Se pueden considerar dentro de este grupo a aquellas personas que no completaron la enseñanza media escolar, las cuales tendrían una mayor probabilidad de recibir un ingreso “bajo”. Un 38% de la población de Aysén entraría en esta categoría, en donde un 76% de ella pertenece a población de ingresos bajos.
+
+Para aquellas _personas que tienen entre 11 y 13 años de escolaridad_, el sexo aparentemente influye en la probabilidad de recibir un ingreso alto o bajo. Se puede inferir que en estos grupos se encuentran aquellas personas que terminaron la enseñanza media pero no tienen estudios en educación superior, o bien estudiaron una carrera técnica de un solo año. De acá se desprenden distintos grupos:
+
+Las _mujeres que tienen entre 11 y 13 años de escolaridad_, para las cuales independiente de su edad, su probabilidad de tener un nivel de ingreso bajo es mayor a la de tener uno alto. Esta distinción por sexo puede deberse al tipo de trabajo requerido en la zona, el cual bajo esta premisa, correspondería a un área laboral en donde predominan los trabajadores hombres. Otra explicación podría ser la brecha salarial que existe entre hombres y mujeres para trabajos similares. Un 13% de la población de Aysén entraría en esta categoría, de la cual un 62% de ella pertenece a población de ingresos bajos
+
+Para los _hombres que tienen entre 11 y 13 años de escolaridad_, el algoritmo distingue a la edad como un factor significativo. De acá se desprende que para este grupo, el tener 30 o más años aumenta las posibilidades de recibir un ingreso “alto”. Se puede inferir que esta diferencia que genera la edad se le puede atribuir a la experiencia de las personas en su trabajo. 
+
+Según información del Banco Central, en el año 2016 en la región de Aysén las actividades que aportaron en mayor cantidad al PIB fueron la pesca con un 22,6% del total del PIB regional, y la administración pública con un 16%.
+
+Por otra parte, según datos del SII, para el año 2016 los rubros para los cuales existe una mayor cantidad de empresas en la región de Aysén son el rubro de comercio al por mayor y menor y el rubro de la agricultura, ganadería, caza y silvicultura. 
+
+Al estudiar la caracterización del mercado laboral agrícola y de comercio en Chile, se logra observar cómo los años de escolaridad que presentan estos rubros laborales tienen una presencia significativa de trabajadores cuyo máximo grado académico es la educación media completa, lo cual hace sentido según la clasificación según edad que se generó en el árbol de decisión.
+
+![](C:/Users/ppsa_/Documents/Drope/u/Nivel 10/Geomarketing/lab_geomarketing/arboles_rf/graficos_ft.png)
+
+
+Además, en el informe de Género, empleo y remuneraciones en la agricultura y
+en la economía no agrícola publicado por la ODEPA el año 2011, el cual utiliza información de la Superintendencia de Pensiones, es posible distinguir cómo varía la participación e ingresos recibidos por rubro según el género. Al estudiar cómo se comportan estos factores dentro de la región de Aysén se puede observar como en los rubros de comercio y agricultura predomina la participación masculina, además de ser mayor su ingreso recibido. Lo anterior daría sustento a la “ramificación” generada en el árbol de decisión en base al sexo.
+
+#### Media Aritmética
+
+![](C:/Users/ppsa_/Documents/Drope/u/Nivel 10/Geomarketing/lab_geomarketing/arboles_rf/arbol_prom_r11.png)
+
+Al utilizar la media aritmética como medida de clasificación, se observa que se reduce la cantidad de nodos a uno, donde la escolaridad es la única variable significativa según el modelo. La única ramificación se hace a los 16 años de escolaridad donde el 82% de la muestra (población de Aysén) tendría menos de 16 años de escolaridad y recibe ingresos bajos, mientras que el 18% restante habría estudiado 16 o más años para recibir remuneraciones altas.
+
+La diferencia de este árbol respecto al árbol que utiliza la mediana como criterio para identificar ingresos altos, se debe a que la mediana de ingresos para la región de Aysén es de 403000, mientras que la media es 628444 por lo que para ganar ingresos sobre la media solo importan los años de escolaridad y es necesario tener 16 o más años de estudios o el equivalente a haber cursado una carrera profesional universitaria (4 años o más), mientras que para ganar más que la mitad de las personas de la región sería necesario haber cursado 14 años de estudios o el equivalente a haber estudiado una carrera técnica, caso en el que otras variables también influyen en la clasificación.
+
+Podría inferirse que al obtener un título universitario los demás factores utilizados en el modelo no son relevantes al momento de conseguir un empleo en Aysén. Esto puede deberse a las características de los empleos ofrecidos que requieren de profesionales que posean un título universitario.
+
+### Árbol de Decisión Región Metropolitana
+
+#### Mediana
+
+```{r echo=FALSE}
+
+rpart.plot(arbol_rm_med,type=5,extra=104)
+```
+
+#### Media Aritmética
+
+```{r echo=FALSE}
+rpart.plot(arbol_rm,type=5,extra=104)
+```
+
+Para la Región Metropolitana, se observa que los árboles de decisión generados según las distintas clasificaciones son relativamente similares, ya que los dos grupos que se generan se clasifican en base a los años de escolaridad de la población. La principal diferencia entre estos dos árboles son los años de escolaridad con los cuales se realizan las clasificaciones. 
+
+Para el primer caso, se podría considerar a las personas con 15 o más años de escolaridad a aquellos que poseen un título técnico, lo cual aparentemente aumenta la probabilidad de tener un ingreso sobre $400.000.
+
+Mientras que para el segundo caso, se podría inferir que las personas con 17 o más años de escolaridad son aquellos que tienen un título universitario de una carrera de 5 o más años.
+
+Se observa cómo para la clasificación hecha utilizando la mediana, un 37% de la población se incluye dentro del grupo con ingresos “altos”, mientras que para la clasificación hecha en base al promedio este porcentaje de la población que recibe ingresos “altos” es sólo de un 22%; lo cual era de esperar, ya que los ingresos de la población perteneciente al grupo de ingresos “altos” son más elevados para la clasificación hecha en base al promedio.  
+
+Esto refleja como en la Región Metropolitana se valoran los años de escolaridad que tenga la persona, por sobre los otros factores tomados en cuenta en el modelo. Se muestra como las variables de edad, sexo y nacionalidad no influyen de manera significativa en estas clasificaciones. 
+
+### Comparación Árboles de Decisión
+
+Al realizar una comparación general entre los árboles generados para ambas regiones se logran apreciar similitudes y diferencias:
+
+Para ambas regiones los años de escolaridad son el factor más determinante para distinguir el nivel de ingresos de la población. Esto es esperable, ya que existe una correlación positiva entre estas dos variables. 
+
+Si se comparan los árboles generados en base al ingreso promedio de cada región se observa que para ambos casos la distinción se hace únicamente en base a los años de escolaridad de la población. No obstante, esta distinción se hace para los 16 años para la región de Aysén, mientras que para la región Metropolitana se crea a partir de los 17 años. Esta diferencia en los años de escolaridad podría atribuirse a que en Santiago existe una mayor competencia en el mercado laboral que requiere de profesionales con título universitario, por lo cual el estudiar una carrera más larga aumenta la probabilidad de recibir un ingreso alto en la región Metropolitana. Otra razón podría ser que en la región de Aysén se valoran más en el mercado laboral a los profesionales con título técnico. 
+
+La principal diferencia que se puede observar entre los árboles de ambas regiones se presenta en los árboles que clasifican según ingresos dados por el valor de la mediana. Se observa como para la región de Aysén el sexo es un factor significativo en el nivel de ingreso que recibe un determinado sector de la población, mientras que en la región Metropolitana no. Como se mencionó, una posible caracterización de este grupo corresponde a gente que completó su enseñanza media y se desempeña laboralmente en el área agrícola o similares. Una posibilidad es que esta distinción en base al sexo no se genere en la región Metropolitana debido a que este rubro laboral no tenga el peso que tiene en Aysén. 
+
+
+
+
+# II - Comparación entre Árboles de decisión y Random forest
+
+En esta parte se analizarán los rendimientos de los modelos árboles de decisiones y random forest en función de su capacidad de clasificar los ingresos de las personas a partir de las variables edad, años de escolaridad, sexo y nacionalidad disponibles en la encuesta CASEN. Para esto se utiliza todo el dataset de la encuesta CASEN, es decir el análisis se realiza a nivel país.
+
+Para esto se divide el dataframe en una muestra de entrenamiento que corresponde al 30% del dataset total y otra muestra que corresponde al 70% restante de la población encuestada y será utilizada para la predicción de los ingresos percibidos. 
+
+## Análisis con una iteración
+
+Primero se establece la semilla que permite replicar el experimento con los mismos datos para dividir la muestra en datasets de entrenamiento y evaluación.
+
+```{r}
+#se establece la semilla
+set.seed(1)
+# Se divide la poblacion en muestra de entrenamiento y evaluacion
+dt = sort(sample(nrow(casen_mod), nrow(casen_mod)*.7))
+casen_train<-casen_mod[dt,]
+casen_test<-casen_mod[-dt,]
+```
+
+```{r}
+#se genera la regresión, la predicción y finalmente se calculan los valores clasificados correctamente
+arbol_casen = rpart(ing_nivel~edad+esc+sexo+nac,casen_train,model=T, method = "class")
+pred_ad = predict(arbol_casen,casen_test,type = "class")
+aciertos_ad = which(casen_test$ing_nivel==pred_ad)
+length(aciertos_ad)
+```
+
+```{r echo=FALSE}
+#Se calcula el porcentaje de acierto
+summary(pred_ad)
+(length(aciertos_ad)/nrow(casen_test))*100
+```
+![](C:/Users/ppsa_/Documents/Drope/u/Nivel 10/Geomarketing/lab_geomarketing/arboles_rf/arbolfinal.png)
+
+Analizando los resultados del árbol de decisión se aprecia que a nivel nacional, los mayores ingresos se perciben a partir de 16 años de escolaridad o más, es decir han estudiado la cantidad de años necesarias para obtener un título profesional, por lo que se puede inferir que para obtener mayores recursos se debe poseer un título profesional en un contexto nacional. Dentro de las personas que posiblemente posean el título profesional, se valoran más (monetariamente hablando), aquellas que tienen una edad igual o mayor a 27 años, es decir en el mercado laboral chileno, se valora la experiencia de los profesionales, siendo 27 años una edad en que las remuneraciones aumentan.
+
+#--------Random Forest---------#
+
+```{r}
+set.seed(1)
+ingresos_rf = randomForest(ing_nivel~edad+esc+sexo+nac, data = casen_train, ntree = 500)
+pred_rf  = predict(ingresos_rf, casen_test)
+aciertos_rf = which(casen_test$ing_nivel==pred_rf)
+length(aciertos_rf)
+```
+
+```{r}
+#Se calcula el porcentaje de acierto
+summary(pred_rf)
+(length(aciertos_rf)/nrow(casen_test))*100
+#Se plotea el error vs los arboles y también se plotea la importancia de las variables
+plot(ingresos_rf, main = "Relacion error vs cantidad de arboles")
+varImpPlot(ingresos_rf, main = "Importancia de variables")
+```
+
+La regresión con randomForest no permite la visualización de un “árbol promedio o más votado”, por lo que la comparación se debe hacer en función de la importancia de las variables. Como se analizó anteriormente, las variables encontradas en la regresión de árboles de decisión fueron escolaridad en primer lugar y edad en segundo. Podemos observar que RandomForest, también considera a la escolaridad como la variable más importante (por lejos), seguido de edad (al igual que los árboles de decisión), sexo y nacionalidad (éstas últimas dos no fueron consideradas significativas por el árbol de decisión). 
+
+
+
+
+Primero se modelan los datos utilizando el algoritmo árboles de decisión, el cual obtuvo un 80.1% de acierto, mientras que randomForest obtuvo un 81.1% de precisión. Al parecer no existe una gran diferencia de rendimiento en cuanto a precisión entre ambos modelos, esto se puede deber a que los predictores utilizados son lo suficientemente estables como para obtener los resultados parecidos en ambos métodos.
+
+
+Esto se puede apreciar en los gráficos de error vs cantidad de árboles para el método de randomforest, en primera instancia se realizó una regresión de 1000 árboles, donde el gráfico muestra una estabilización del error en los primeros árboles encontrados. En segunda instancia se realizó la regresión considerando 50 árboles, el gráfico muestra que antes de los 10 árboles, el error se estabiliza, haciendo poco significativa la aplicación de más árboles al ensamble final
+
+## Análisis de rendimiento con varias iteraciones
+
+
+Para analizar el rendimiento de estos algoritmos, se decide correr estos modelos varias veces para ver cómo se comportan con diferentes muestras de entrenamiento y validación. Para esto se corrió el modelo de random forest 50 veces, mientras que el modelo de Árboles de decisión de ejecutó un total de 100 veces. De estas iteraciones se extrajeron los tiempos de cómputo y también la cantidad  de aciertos respecto a la muestra de entrenamiento.
+
+Para el caso de los árboles de decisión se realizaron 100 iteraciones tanto de la regresión como de la clasificación, para randomForest se realizaron 50 iteraciones considerando 100 árboles. Los resultados se muestran a continuación.
+
+
+```{r}
+#se instala la semilla
+set.seed(2020)
+#se inicia el contador de tiempo de ejecución
+tiempos_ad <- list()
+aciertos_ad_lst = list()
+for (i in 1:100)
+{
+  dt = sort(sample(nrow(casen_mod), nrow(casen_mod)*.7))
+  casen_train<-casen_mod[dt,]
+  casen_test<-casen_mod[-dt,]
+  start_time <- Sys.time()
+  arbol_casen = rpart(ing_nivel~edad+esc+sexo+nac,casen_train,model=T, method = "class")
+  pred_ad = predict(arbol_casen,casen_test,type = "class")
+  end_time <- Sys.time()
+  time_ad = end_time - start_time
+  tiempos_ad = c(tiempos_ad, as.numeric(time_ad))
+  aciertos_ad = which(casen_test$ing_nivel==pred_ad)
+  aciertos_ad_lst = c(aciertos_ad_lst, length(aciertos_ad))
+}
+```
+```{r}
+pruebas_ad = data.frame()
+pruebas_ad = data.frame(matrix(unlist(tiempos_ad)))
+names(pruebas_ad)[1] = "tiempos"
+pruebas_ad = cbind(pruebas_ad, aciertos = unlist(aciertos_ad_lst))
+summary(pruebas_ad)
+```
+
+
+
+```{r}
+#Aciertos de Árboles de decisión
+hist_aciertos_ad = ggplot(pruebas_ad,aes(aciertos)) + 
+  geom_histogram(fill="#005A32", color= "#D9F0A3",bins = 50)+
+  ggtitle("Histograma de aciertos para arboles de decision")+
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(x= "Tiempo", y= "Frecuencia") +
+  xlim(c(23000, 23500))+
+  geom_vline(data=pruebas_ad, aes(xintercept=mean(aciertos), color="promedio"),
+             linetype="dashed")+
+  geom_vline(data=pruebas_ad, aes(xintercept=median(aciertos), color="mediana"),
+             linetype="dashed")+
+  scale_color_manual(name = "Indicador", values = c(mediana="blue",promedio="red"))
+
+hist_aciertos_ad
+```
+
+El histograma de aciertos para árboles de decisión se encuentran más cerca de la mediana que del promedio, aún así se concentran en la parte central de la distribución de aciertos.
+
+```{r}
+#Predicción Random Forest
+#se instala la semilla
+set.seed(2021)
+#Se definen las listas vacias
+tiempos_rf <- list()
+aciertos_rf_lst = list()
+#se inicia el loop para las regresiones
+for(i in 1:50)
+{
+  dt = sort(sample(nrow(casen_mod), nrow(casen_mod)*.7))
+  casen_train<-casen_mod[dt,]
+  casen_test<-casen_mod[-dt,]
+  start_time <- Sys.time()
+  ingresos_rf = randomForest(ing_nivel~edad+esc+sexo+nac, data = casen_train, ntree = 100)
+  pred_rf  = predict(ingresos_rf, casen_test)
+  end_time <- Sys.time()
+  time_rf = end_time - start_time
+  tiempos_rf = c(tiempos_rf, as.numeric(time_rf))
+  aciertos_rf = which(casen_test$ing_nivel==pred_rf)
+  aciertos_rf_lst = c(aciertos_rf_lst, length(aciertos_rf))
+}
+```
+
+
+```{r}
+pruebas_rf = data.frame()
+pruebas_rf = data.frame(matrix(unlist(tiempos_rf)))
+names(pruebas_rf)[1] = "tiempos"
+pruebas_rf = cbind(pruebas_rf, aciertos = unlist(aciertos_rf_lst))
+summary(pruebas_rf)
+```
+
+
+
+```{r}
+#Aciertos de randomForest
+hist_aciertos_rf = ggplot(pruebas_rf,aes(aciertos)) + 
+  geom_histogram(fill="#005A32", color= "#D9F0A3",bins = 50)+
+  ggtitle("Histograma de aciertos para Random Forest")+
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(x= "Tiempo", y= "Frecuencia") +
+  xlim(c(23250, 23700))+
+  geom_vline(data=pruebas_rf, aes(xintercept=mean(aciertos), color="promedio"),
+             linetype="dashed")+
+  geom_vline(data=pruebas_rf, aes(xintercept=median(aciertos), color="mediana"),
+             linetype="dashed")+
+  scale_color_manual(name = "Indicador", values = c(mediana="blue",promedio="red"))
+
+hist_aciertos_rf
+```
+
+El histograma de aciertos de randomForest se ve mucho más ajustado que el de árboles de decisión, donde la mediana y la media se comportan de manera similar.
+
+```{r}
+#tabla de resultados final
+resultados_f = data.frame(stringsAsFactors=FALSE )
+test_ad = c(as.character("arbolesDecision"),mean(pruebas_ad$tiempos), mean(pruebas_ad$aciertos), (mean(pruebas_ad$aciertos)/nrow(casen_test))*100)
+test_rf = c(as.character("randomForest"), mean(pruebas_rf$tiempos), mean(pruebas_rf$aciertos), (mean(pruebas_rf$aciertos)/nrow(casen_test))*100)
+resultados_f = rbind(resultados_f, test_ad, stringsAsFactors=FALSE )
+resultados_f = rbind(resultados_f, test_rf)
+colnames(resultados_f) <- c("metodo","tiempos","aciertos","porc promedio")
+resultados_f
+```
+
+
+Se puede apreciar que los tiempos de cálculo son mayores para random forest, en promedio 5 veces mayor que los tiempos de ejecución de la clasificación con árboles de decisión. En cuanto a los aciertos, en promedio, la precisión de random forest es superior a 1 punto porcentual en comparación a los árboles de decisión. 
+
+En general randomForest presenta un rendimiento levemente mayor que los árboles de decisión, lo que no justifica el tiempo de cálculo 5 veces mayor al de los árboles de decisión, sobre todo en datasets muy grandes.
+
+##Bibliografía
+
+https://www.odepa.gob.cl/odepaweb/publicaciones/doc/2765.pdf
+https://www.bcn.cl/siit/nuestropais/region11/indica.htm
+https://www.odepa.gob.cl/wp-content/uploads/2018/02/1385995904MercadoLaboralAgricola.pdf
