@@ -1,0 +1,350 @@
+---
+title: "Trabajo 1 Geomarketing"
+author: "Pedro Pablo Silva Antilef"
+date: "7 de mayo de 2020"
+output: html_document
+---
+
+---
+title: "Trabajo 1 Geomarketing"
+author: "Pedro Pablo Silva Antilef"
+date: "7 de mayo de 2020"
+output: html_document
+---
+
+# Introducción
+En este trabajo se analizará la base de datos de la Encuesta de Caracterización Socioeconomica Nacional (CASEN), 
+específicamente de las variables Ingresos corregidos (ytotcor), Edad (edad), Años de escolaridad (esc) y 
+finalmente el sexo de la persona encuestada. La idea es explorar la base de datos y limpiarla.
+Posteriormente se realizarán regresiones considerando los ingresos como la variable dependiente y 
+los Años de Escolaridad y la Edad como variables independientes para las primeras regresiones. Para el segundo grupo de regresiones se 
+adicionará al análisis la variable Sexo como dummy, donde el valor 1 corresponde a "Hombre" y el valor 2 corresponde a "Mujer".
+
+# Importación de datos
+
+Se importan los datos desde BD Postgres que contiene todos los datos de la encuesta.
+
+```{R, echo = TRUE, warning = FALSE, message = FALSE}
+library(caret)
+library(psych)
+library(RPostgreSQL)
+library(dplyr)
+library(ggplot2)
+library(GGally)
+library(randomForest)
+library(rmarkdown)
+
+#Conectar con dbpsql
+#clave de acceso
+pw = {
+  "admin"
+}
+drv = dbDriver("PostgreSQL")
+
+#Crear conexión a base de datos
+con = dbConnect(drv, dbname = "postgres",
+                host = "localhost", port = 5432,
+                user = "postgres", password = "admin")
+
+#Solicitud SQL data "general"
+q = "SELECT ytotcor as ingreso, edad, esc, sexo, expc FROM public.casen;"
+data = dbSendQuery(con, q)
+data = dbFetch(data)
+```
+
+
+
+# Análisis exploratorio
+Primero haremos un análisis exploratorio de las 3 variables consideradas en el estudio, para eso, veremos los headers del dataset, veremos los histogramas de cada variable en "crudo" y también los histogramas de las variables multiplicado por el factor de expansión comunal (expc).
+
+
+Vemos los primeros registros del dataset
+
+```{R, echo = TRUE, warning = FALSE, message = FALSE}
+head(data)
+summary(data)
+```
+
+
+
+
+## Histogramas
+Los histogramas se analizarán con los datos en crudo y también utilizando el factor de expansión para ver la representatividad de la muestra.
+
+### Histograma Ingreso sin factor de expansión
+```{R, echo = TRUE, warning = FALSE, message = FALSE}
+data$ingreso = as.numeric(data$ingreso)
+hist(data$ingreso, breaks = "FD",main = "histograma Ingreso sin factor de expansion", xlab = "Ingreso total corregido" ,xlim = c(0,4000000))
+
+```
+
+El histograma de ingreso se realizó sin considerar el factor de expansión y tiene una distribución esperada.
+Ya que la mayor frecuencia de sueldos se encuentra en sueldos bajos, donde la mayor frecuencia fluctua en valores
+menores al sueldo mínimo nacional.
+
+### Histograma edad
+```{R, echo = TRUE, warning = FALSE, message = FALSE}
+#Histograma Edad sin factor de expansion
+data$edad = as.numeric(data$edad)
+hist(data$edad, breaks = "FD",main = "histograma edad sin factor de expansion", xlab = "Edad" )
+#Histograma Edad con factor de expansion
+q = "SELECT edad, COUNT(edad), SUM(CAST(expc AS DOUBLE PRECISION)) as Totedad FROM public.casen GROUP BY edad ORDER BY LENGTH(edad),edad;"
+data_edad = dbSendQuery(con, q)
+data_edad = dbFetch(data_edad)
+barplot(data_edad$totedad,names.arg=data_edad$edad ,xlab="Edad",ylab="Frecuencia",col="blue",
+        main="Histograma Edad GS con Factor de expansion",border="black")
+```
+
+
+Para el histograma de edad, se aprecia una pequeña diferencia en el histograma sin considerar el factor de expansión
+en cuanto al rango más pequeño, donde tiene una frecuencia considerablemente más alta que en el histograma considerando
+el factor de expansión. Esta alta frecuencia parece ser aplanada con el factor de expansión. El resto del histograma
+parece concordar con la situación poblacional de Chile, una población relativamente joven, que tiene a envejecer,
+situación demográfica típica de los paises en "vías de desarrollo"
+
+
+### Histograma Escolaridad
+```{R, echo = TRUE, warning = FALSE, message = FALSE}
+#Histograma escolaridad sin factor de expansion
+data$esc = as.numeric(data$esc)
+hist(data$esc, breaks = "FD",main = "histograma de años de escolaridad sin factor de expansion", xlab = "Años de escolaridad")
+#Histograma Escolaridad con factor de expansion
+q = "SELECT esc, COUNT(esc), SUM(CAST(expc AS DOUBLE PRECISION)) as TotEsc FROM public.casen GROUP BY esc ORDER BY LENGTH(esc),esc;"
+data_esc = dbSendQuery(con, q)
+data_esc = dbFetch(data_esc)
+data_esc = data_esc[-24,]
+barplot(data_esc$totesc,names.arg=data_esc$esc  ,xlab="Años de escolaridad",ylab="Frecuencia",col="blue",
+        main="Histograma Escolaridad GS con Factor de expansion",border="black")
+```
+
+
+Este es uno de los histogramas que presenta una mayor coherencia entre ambos histogramas.
+Se aprecia un peak de frecuencia en los 12 años de escolaridad, lo cual concuerda con los años de educación obligatoria
+del pais. La siguiente frecuencia más alta se encuentra en los 17 años de estudio, lo que equivaldría a una educación
+universitaria completa. El tercer peak corresponde a los 15 años de escolaridad, lo que correspondería a una carrera
+técnica profesional completa y cualquier otro estudio superior incompleta. Se considera que el valor 8, debería tener
+mayor frecuencia, ya que corresponde a la enseñanza básica completa y según el Censo población y vivienda 2017, este año
+debería tener una mayor frecuencia mayor, bastante parecida a la frecuencia de 17 años de escolaridad, se recomienda considerar una comparasión
+con dicha encuesta en un trabajo futuro.
+
+
+
+## Depuración de datos y Matríz de correlación.
+
+
+```{R, echo = TRUE, warning = FALSE, message = FALSE}
+#respaldar data
+data_resp = data
+#data = data_resp
+# Separar datos en 70% de entrenamiento y 30% de prueba
+data = data[c(1,2,3,4)]
+data = data[complete.cases(data), ]
+data = data[!(data$ingreso >10000000 | data$edad > 65 | data$esc <8 ),]
+```
+Para depurar nuestra base de datos, eliminamos aquellos registros que contienen datos como "NA", disminuyendo de 35.628 registros a 17.652 observaciones. Además se eliminaron los outliers que generaban algunos subajustes en el modelamiento de los datos, como los ingresos superiores a 10 millones de pesos, mayores de 65 y personas que tengan menos de 8 años de escolaridad.
+
+
+## Análisis de correlación
+```{R, echo = TRUE, warning = FALSE, message = FALSE}
+ggpairs(data, title="Correlacion de variables")
+```
+
+Se procede a analizar la correlación entre las variables que se utilizarán. En la matríz de correlación podemos 
+observar que la variable dependiente tiene una baja correlación con la edad (0.141), lo cual tiene sentido, ya que los ingresos no dependen de la edad de las personas, en general dependen de otros aspectos como los años de estudio, la calidad de la educación superior, si se tiene un trabajo formarl o informal, entre muchas otras variables, todas estas variables nombradas anteriormente no distinguen de edad.
+
+Además es muy probable que el ingreso depende más de los años de estudios cursados y de la calidad de los estudios realizados. Los años de escolaridad tienen una correlación de 0.495, lo que demuestra que puede existir una relación positiva entre dichos años de estudio y los ingresos percividos por el individuo.
+
+
+
+## Regresiones
+
+
+Se decidió utilizar 3 tipos de regresiones para analizar nuestro dataset. Los modelos utilizados fueron:
+Regresión lineal de mínimos cuadrados
+Regresion lineal Elastic Net
+Regresión Random Forest
+
+Para cada regresión se separó la muestra y se utilizó un 70% de los datos para entrenar los modelos y un 30% para la validación
+cruzada.
+
+
+```{R, echo = TRUE, warning = FALSE, message = FALSE}
+set.seed(5)
+ind = sample(2, nrow(data), replace = T, prob = c(0.7, 0.3))
+train = data[ind==1,]
+test = data[ind==2,]
+```
+
+
+
+### Regresión Ingreso = Años de escolaridad + Edad
+
+
+#### Entrenamiento
+
+
+Definimos los parámetros para entrenar las regresiones lineales, utilizando el método cv (Cross Validation)
+
+
+```{R, echo = TRUE, warning = FALSE, message = FALSE}
+# Definir entrenamiento
+param = trainControl(method = "cv",
+                     number = 20,
+                     repeats = 50)
+```
+
+
+#### Regresión lineal de mínimos cuadrados Sin Sexo
+
+
+Finalmente generamos la regresión lineal de mínimos cuadrados y se muestran los resultados
+
+```{R, echo = TRUE, warning = FALSE, message = FALSE}
+set.seed(1239)
+lm = train(ingreso ~ esc + edad,
+           train,
+           method = 'lm',
+           trControl = param)
+lm
+summary(lm)
+```
+
+Esta regresión obtuvo un R2 de 0.2772907, lo que evidencia un bajo ajuste de la regresión
+hacia los datos, probablemente por la dispersión de los mismos. Por otro lado el RMSE obtuvo un valor de 492911.9.
+Por otro lado, la regresión quedó de la siguiete manera
+\begin{align}
+Ingresos = - 1976748 + 159923\cdot Esc + 13665\cdot Edad
+\end{align}
+
+De esta ecuación podemos inferir que por cada año más de escolaridad, en promedio los ingresos aumentan en 159923 pesos. De la misma manera, por cada año más de edad, los ingresos aumentan en promedio 13665, por lo que su influencia en la variale dependiente es menor que los años de escolaridad.  
+
+#### Regresión lineal con Elastic Net
+Se genera la regresión lineal con el método Elastic Net
+```{R, echo = TRUE, warning = FALSE, message = FALSE}
+set.seed(1237)
+en = train(ingreso ~ esc + edad ,
+           train,
+           method = 'glmnet',
+           tuneGrid = expand.grid(alpha = seq(0, 1, length = 10),
+                                  lambda = seq(0.0001, 0.1, length = 5)),
+           trControl = param)
+en
+tail(coef(en$finalModel), 3)
+```
+
+
+Para la regresión Elastic Net, se obtuvo un R2 de 0.2784351, lo que muestra un bajo rendimiento de este método de clasificación, muy parecido al rendimiento que se obtuvo en la regresión de mínimos cuadrados.
+El valor para RMSE es de 820537.3, el doble que la regresión lm.
+
+
+\begin{align}
+Ingresos = - 1958403 + 159110\cdot Esc + 13482\cdot Edad
+\end{align}
+
+
+La ecuación final de la regresión muestra que por cada año de escolaridad, los ingresos aumentan en 159110 promedio, mientras que por cada año más de edad, el ingreso aumenta en promedio 13482 pesos. En términos prácticos, el resultado es idéntico al obtenido en la regresión por mínimos cuadrados.
+
+
+
+#### Regresión con Random Forest
+Se redefinen los parámetros para el entrenamiento del algoritmo, cambiando el método cv por cv_adaptative, un método de validación cruzada adaptativa, para este tipo de algoritmos. Luego se hace correr el modelo con 1000 iteraciones.
+```{R, echo = TRUE, warning = FALSE, message = FALSE}
+param = trainControl(method = "adaptive_cv",
+                     number = 500)
+rf = randomForest(log(ingreso) ~ esc + edad, data = train, trControl = param, ntree = 1000)
+tail(rf$rsq)
+rf
+plot(rf)
+```
+
+La regression con el modelo Random Forest obtuvo un R2 de 0.372, mejor que las regresiones lineales realizadas anteriormente. Además obtuvo un RMSE de 0.9625118.
+
+Este modelo no permite la interpretación de parámetros.
+
+
+
+### Regresión Ingreso = Años de escolaridad + Edad + Sexo
+
+
+Definimos los parámetros para entrenar las regresiones lineales, utilizando el método cv (Cross Validation)
+```{R, echo = TRUE, warning = FALSE, message = FALSE}
+# Definir entrenamiento
+param = trainControl(method = "cv",
+                     number = 20,
+                     repeats = 50)
+```
+
+#### Regresión lineal de mínimos cuadrados considerando sexo
+Finalmente generamos la regresión lineal de mínimos cuadrados y se muestran los resultados
+```{R, echo = TRUE, warning = FALSE, message = FALSE}
+set.seed(1999)
+lm = train(ingreso ~ esc + edad + sexo,
+           train,
+           method = 'lm',
+           trControl = param)
+lm
+summary(lm)
+```
+
+Esta regresión obtuvo un R2 de 0.2972032, mostrando una leve mejora respecto a la misma regresión sin sexo, aun asi, sigue siendo una bondad de ajuste baja. Por otro lado el RMSE obtuvo un valor de 809261.3
+La regresión quedó de la siguiete manera
+\begin{align}
+Ingresos = - 1856604 + 160129\cdot Esc + 13809\cdot Edad - 257938\cdot Sexo2
+\end{align}
+
+Finalmente la ecuación resultante muestra un aumento de 160129 pesos promedio en los ingresos por cada años más de escolaridad, 13809 pesos promedio por cada año más de edad (Ambos coeficientes, similares a las regresiones realizadas sin considerar el sexo del encuestado) y las personas con sexo femenino obtienen en promedio 2457938 pesos menos.
+
+#### Regresión lineal con Elastic Net
+Se genera la regresión lineal con el método Elastic Net
+```{R, echo = TRUE, warning = FALSE, message = FALSE}
+set.seed(420)
+en = train(ingreso ~ esc + edad + sexo,
+           train,
+           method = 'glmnet',
+           tuneGrid = expand.grid(alpha = seq(0, 1, length = 10),
+                                  lambda = seq(0.0001, 0.1, length = 5)),
+           trControl = param)
+en
+tail(coef(en$finalModel), 4)
+```
+
+
+Esta regresión obtuvo un R2 de 0.2956601, y un RMSE de 809625.5, casi idéntico a la regresion lm.
+
+
+\begin{align}
+Ingresos =  - 1838853 + 159120\cdot Esc + 13678\cdot Edad - 255464\cdot Sexo2
+\end{align} 
+
+
+Esta ecuación explica que por cada año de escolaridad el ingreso aumenta en 159336 pesos, y 13644 pesos más por cada año de edad adicional. Por otra parte, las personas con sexo femenino, ganan en promedio 254058 pesos menos
+
+
+
+#### Regresión con Random Forest
+Se redefinen los parámetros para el entrenamiento del algoritmo, cambiando el método cv por cv_adaptative, un método de validación cruzada adaptativa, para este tipo de algoritmos. Luego se hace correr el modelo con 1000 iteraciones.
+```{R, echo = TRUE, warning = FALSE, message = FALSE}
+param = trainControl(method = "adaptive_cv",
+                     number = 500)
+rf = randomForest(ingreso ~ esc + edad + sexo, data = train, trControl = param, ntree = 1000)
+tail(rf$rsq)
+rf
+plot(rf)
+summary(rf)
+```
+
+
+La regression con el modelo Random Forest obtuvo un R2 de 0.3416212, mejor que las regresiones lineales realizadas anteriormente. Además obtuvo un RMSE de 615323075099, un valor bastante alto, el modelo sin sexo obtuve un RMSE mucho menor.
+
+Este modelo no permite la interpretación de parámetros.
+
+
+
+### Conclusión
+
+En general los modelos obtenidos muestran resultados bastante parecidos. En cuanto a la bondad de ajuste, todos los modelos obtuvieron valores deficientes para una predicción, pero quizás lo suficiente como para encontrar una tendencia simple en cuanto a la distribución de los ingresos en la población chilena en función del Censo de vivienda y urbanismo del año 2017. Los modelos lineales presentaron un rendimiento menor que el algoritmo adaptativo o ensambladores presentado que en este caso corresponde a Random Forest, por lo que en caso de realizar una predicción, se recomienda utilizar un método adaptativo, sobre todo el modelo que contempla el sexo. Para este trabajo, el cual solicitaba un análisis de componente, las regresiones lineales fueron las que nos entregaron la información solicitada. 
+
+En terminos generales se observa que la variable que más influye en el modelo son los años de escolaridad, aumentando en promedio 160000 CLP el ingreso por cada año adicional de escolaridad. La edad de cada persona no influye tanto en el ingreso de las personas, aumentando en 13000 CLP en promedio por cada año más de edad. 
+
+Finalmente la variable dummy Sexo, no ayudó a mejorar el rendimieto del algoritmo, ya que los parámetros e indicadores se mantuvieron prácticamente iguales, pero si ayudó a cuantificar la brecha salarial sufrida por el sexo femenino con un promedio de 255000 CLP menos que el sueldo percibido por el sexo masculino.
+
